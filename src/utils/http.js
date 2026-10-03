@@ -337,9 +337,21 @@ class HttpClient extends EventEmitter {
         console.log('Response data:', JSON.stringify(data, null, 2));
       }
       if (data && data.message) {
-        return new Error(`Instagram API Error: ${data.message}`);
+        const apiError = new Error(`Instagram API Error: ${data.message}`);
+        apiError.status = error.response.status;
+        apiError.code = data.error_type || data.error_code || null;
+        apiError.responseData = data;
+        apiError.url = error.response.config?.url || error.config?.url;
+        return apiError;
       }
-      return new Error(`HTTP Error ${error.response.status}: ${error.response.statusText}`);
+
+      const httpError = new Error(
+        `HTTP Error ${error.response.status}: ${error.response.statusText}`
+      );
+      httpError.status = error.response.status;
+      httpError.responseData = data;
+      httpError.url = error.response.config?.url || error.config?.url;
+      return httpError;
     }
     return error;
   }
