@@ -1,6 +1,6 @@
 {
   "name": "tanvir143",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Bot-first Instagram Chat API with MQTT realtime messaging, session persistence, media, thread management, and InstaBot/FCA-compatible APIs.",
   "main": "index.js",
   "types": "index.d.ts",
