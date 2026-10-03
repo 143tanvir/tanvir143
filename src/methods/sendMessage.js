@@ -112,7 +112,14 @@ class SendMessage {
     if (!csrfToken) throw new Error('Missing csrftoken cookie');
 
     const mutationToken = CryptoUtils.generateUUID();
-    return {
+
+    // Instagram's private Direct endpoint is stricter than the inbox
+    // endpoint: keep the authenticated user id in the form whenever the
+    // ds_user_id cookie is available. This also keeps cookie-login and
+    // password-login sessions consistent.
+    const userId = this.http.getCookieValue('ds_user_id');
+
+    const result = {
       action: 'send_item',
       [recipientField]: recipientValue,
       client_context: mutationToken,
@@ -121,8 +128,19 @@ class SendMessage {
       device_id: this.deviceId,
       _csrftoken: csrfToken,
       _uuid: this.uuid,
+      use_unified_inbox: 'true',
       ...form
     };
+
+    if (userId) result._uid = userId;
+
+    // The private endpoint historically expects a zero thread id when
+    // recipient_users is used to create/open a DM thread.
+    if (recipientField === 'recipient_users' && result.thread_ids === undefined) {
+      result.thread_ids = '["0"]';
+    }
+
+    return result;
   }
 
   extractMessageInfo(response, fallbackThreadID, clientContext) {
@@ -149,13 +167,49 @@ class SendMessage {
     const form = this.buildBroadcastForm(recipientType, recipient || JSON.stringify([threadID]), extra);
     const clientContext = form.client_context;
 
-    const response = await this.http.postForm(
-      'https://www.instagram.com/api/v1/direct_v2/threads/broadcast/text/',
-      form
-    );
+    // Direct-message POSTs are handled on Instagram's mobile API host more
+    // reliably than the web host. Keep a web-host fallback because Instagram
+    // can route accounts differently.
+    const endpoints = [
+      'https://i.instagram.com/api/v1/direct_v2/threads/broadcast/text/',
+      'https://www.instagram.com/api/v1/direct_v2/threads/broadcast/text/'
+    ];
 
-    if (response.status === 'ok') return this.extractMessageInfo(response, threadID, clientContext);
-    throw new Error(response.message || 'Failed to send text message');
+    let lastError = null;
+
+    for (let i = 0; i < endpoints.length; i++) {
+      try {
+        const response = await this.http.postForm(endpoints[i], form);
+
+        if (response?.status === 'ok') {
+          return this.extractMessageInfo(response, threadID, clientContext);
+        }
+
+        const error = new Error(response?.message || 'Failed to send text message');
+        error.responseData = response;
+        lastError = error;
+
+        // If Instagram returned a normal API response rather than throwing,
+        // only try the fallback host for an authentication/route failure.
+        const message = String(response?.message || '').toLowerCase();
+        if (!message.includes('login_required') && i === 0) break;
+      } catch (error) {
+        lastError = error;
+
+        const message = String(error?.message || '').toLowerCase();
+        const retryOnFallback =
+          message.includes('login_required') ||
+          message.includes('http error 401') ||
+          message.includes('http error 403') ||
+          message.includes('http error 404');
+
+        if (!retryOnFallback || i === endpoints.length - 1) {
+          throw error;
+        }
+      }
+    }
+
+    throw lastError || new Error('Failed to send text message');
   }
 
   // Route a single attachment (local path or remote URL) to the right sendMedia method
