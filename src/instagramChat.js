@@ -143,6 +143,19 @@ class InstagramChatAPI extends EventEmitter {
     const jarCookies = this.http.jar.serializeSync().cookies;
     const find = (key) => jarCookies.find(c => c.key === key)?.value;
 
+    // Build the MQTT Cookie header from the same authenticated Instagram
+    // session used by HttpClient. Keep only Instagram cookies so a browser
+    // export containing unrelated domains cannot contaminate the handshake.
+    const instagramCookies = jarCookies.filter((cookie) => {
+      const domain = String(cookie.domain || '').toLowerCase();
+      return domain === 'instagram.com' ||
+        domain.endsWith('.instagram.com');
+    });
+
+    const cookieHeader = instagramCookies
+      .map(c => `${c.key}=${c.value}`)
+      .join('; ');
+
     this.mqtt = new InstagramMQTTClient({
       deviceId:    this.deviceId,
       phoneId:     this.phoneId,
@@ -152,7 +165,7 @@ class InstagramChatAPI extends EventEmitter {
       sessionId:   find('sessionid'),
       csrftoken:   find('csrftoken'),
       igDid:       find('ig_did'),
-      cookies:     jarCookies.map(c => `${c.key}=${c.value}`).join('; '),
+      cookies:     cookieHeader,
       userAgent:   this.http.userAgent,
       http:        this.http
     });
